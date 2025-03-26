@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Subset
-from torchvision.datasets import ImageNet
+from torchvision.datasets import ImageNet, ImageFolder
 from torchvision import transforms
 from torchvision.models import resnet34, resnet50
 from torchvision.models.resnet import BasicBlock, Bottleneck
@@ -94,9 +94,7 @@ def save_checkpint(model, optimizer, task_id, epoch, save_dir):
         'state_dict': model.state_dict(),
         'optimizer': optimizer.state_dict()
     }
-    torch.save(checkpoint, os.path.join(save_dir, f"task_{task_id}_epoch_{epoch}.pth"))
-    print(f"Checkpoint saved for Task {task_id} at epoch {epoch}")
-    pass
+    torch.save(checkpoint, os.path.join(save_dir, "checkpoint.pth"))
 
 def train_ansnet(model, task_loaders, save_dir, task_id, num_epochs=30, lr=0.0001):
     criterion = nn.CrossEntropyLoss()
@@ -168,7 +166,7 @@ if __name__ == '__main__':
     ])
     
     # 加载数据集
-    dataset = ImageNet(root=args.dataset_root, split='train', transform=transform)
+    dataset = ImageFolder(root=args.dataset_root, transform=transform)
     # 创建任务拆分器
     spliter = TaskSpliter(num_classes=len(dataset.classes), num_tasks=args.num_tasks, class_per_task=args.class_per_task)
 
