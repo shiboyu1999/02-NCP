@@ -1,6 +1,7 @@
 """
 基于梯度信息的CNN架构(ResNet)的祖先模型的学习基因抽取
 """
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -86,12 +87,23 @@ class BlockGradTracker:
 # ------------------------
 # 训练流程
 # ------------------------
-def train_ansnet(model, task_loaders, num_epochs=30, lr=0.0001):
+def save_checkpint(model, optimizer, task_id, epoch, save_dir):
+    checkpoint = {
+        'task_id': task_id,
+        'epoch': epoch,
+        'state_dict': model.state_dict(),
+        'optimizer': optimizer.state_dict()
+    }
+    torch.save(checkpoint, os.path.join(save_dir, f"task_{task_id}_epoch_{epoch}.pth"))
+    print(f"Checkpoint saved for Task {task_id} at epoch {epoch}")
+    pass
+
+def train_ansnet(model, task_loaders, save_dir, task_id, num_epochs=30, lr=0.0001):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
     
     model.train()
-    for _ in tqdm(range(num_epochs)):
+    for epoch  in tqdm(range(num_epochs)):
         for inputs, labels in task_loaders:
             inputs, labels = inputs.cuda(), labels.cuda()
             optimizer.zero_grad()
@@ -99,7 +111,19 @@ def train_ansnet(model, task_loaders, num_epochs=30, lr=0.0001):
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
+
+    save_checkpint(model, optimizer, task_id, epoch, save_dir)
     return model
+
+# ------------------------
+# 保存gradient_matrix函数
+# ------------------------
+def save_gradient_matrix(gradient_matrix, save_path):
+    np.savetxt(os.path.join(save_path, "gradient_matrix.txt"),
+               gradient_matrix,
+               fmt="%.6f",
+               delimiter=",")
+    print(f"Gradient matrix saved for Task {task_id}")
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -111,7 +135,7 @@ def parse_args():
     parser.add_argument('--num-epochs-per-task', type=int, default=30)
     parser.add_argument('--lr', type=float, default=0.0001)
     parser.add_argument('--num-workers', type=int, default=4)
-    parser.add_argument('--save-path', type=str, default='checkpoints/')
+    parser.add_argument('--save-path', type=str, default='./results/Grad-cnn-checkpoints/')
     # 数据集相关参数
     parser.add_argument('--dataset-root', type=str, default='./imagenet')
     # 模型相关参数
@@ -122,6 +146,9 @@ def parse_args():
 
 if __name__ == '__main__':
     args = parse_args()
+    args.save_path = os.path.join(args.save_path, args.arch)
+    if not os.path.exists(args.save_path):
+        os.makedirs(args.save_path)
 
     # 初始化模型
     if args.arch == 'resnet34':
@@ -160,7 +187,7 @@ if __name__ == '__main__':
                                  pin_memory=torch.cuda.is_available())
         
         tracker = BlockGradTracker(model)
-        trained_model = train_ansnet(model, task_loaders, num_epochs=args.num_epochs_per_task, lr=args.lr)
+        trained_model = train_ansnet(model, task_loaders, save_dir=args.save_path, task_id=task_id, num_epochs=args.num_epochs_per_task, lr=args.lr)
         
         # 执行虚拟前向传播以捕获最终梯度
         sample, _ = next(iter(task_loaders))
@@ -177,12 +204,7 @@ if __name__ == '__main__':
     
     # 将梯度矩阵转化为[任务数目 ✖️  block数量]
     gradient_matrix = np.array(final_grad_matrix)
+    save_gradient_matrix(gradient_matrix, args.save_path)
     print("梯度矩阵形状:", gradient_matrix.shape)
     print("示例梯度值:")
     print(gradient_matrix[:5, :3])  # 显示前5层在前3个任务的值
-
-    
-
-
-
-
