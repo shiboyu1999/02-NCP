@@ -102,7 +102,7 @@ def train_ansnet(model, task_loaders, save_dir, task_id, num_epochs=30, lr=0.000
     
     model.train()
     for epoch  in tqdm(range(num_epochs)):
-        for inputs, labels in task_loaders:
+        for inputs, labels in (task_loaders):
             inputs, labels = inputs.cuda(), labels.cuda()
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -155,6 +155,7 @@ if __name__ == '__main__':
         model = resnet50(pretrained=False)
     else:
         raise ValueError(f"Unknown architecture {args.arch}")
+    model.fc = torch.nn.Linear(model.fc.in_features, args.class_per_task)  # 修改分类器
     model = model.cuda()
     
     # 数据集预处理
@@ -167,8 +168,19 @@ if __name__ == '__main__':
     
     # 加载数据集
     dataset = ImageFolder(root=args.dataset_root, transform=transform)
+    class_to_idx = dataset.class_to_idx  # {类标签: 类索引}
+    classes = dataset.classes  # 类别名称列表
+
+    # 预先计算每个类标签的样本索引
+    class_indices = {class_label: [] for class_label in class_to_idx.keys()}
+    for idx, (data, label) in enumerate(dataset):
+        class_label = classes[label]
+        class_indices[class_label].append(idx)
+
     # 创建任务拆分器
-    spliter = TaskSpliter(num_classes=len(dataset.classes), num_tasks=args.num_tasks, class_per_task=args.class_per_task)
+    num_classes = len(classes)
+    num_tasks = args.num_tasks
+    class_per_task = args.class_per_task
 
     # 记录最终的梯度矩阵
     final_grad_matrix = []
@@ -176,13 +188,24 @@ if __name__ == '__main__':
     # 开始训练
     for task_id in range(args.num_tasks):
         print(f"#####################Task {task_id}#########################")
-        task_classes = spliter.get_task_indices(task_id)
-        task_loaders = DataLoader(Subset(dataset, task_classes), 
+        # 获取当前任务的类标签
+        task_classes = classes[task_id * class_per_task:(task_id + 1) * class_per_task]
+        print(f"Task {task_id} classes: {task_classes}")
+
+        # 获取当前任务对应的索引
+        task_indices = []
+        for class_label in task_classes:
+            task_indices.extend(class_indices[class_label])  # 获取所有类标签对应的样本索引
+
+        # 根据任务的样本索引创建子集
+        task_dataset = Subset(dataset, task_indices)
+        task_loaders = DataLoader(task_dataset, 
                                  batch_size=args.batch_size,
                                  shuffle=True,
                                  drop_last=True,
                                  num_workers=args.num_workers,
                                  pin_memory=torch.cuda.is_available())
+        print(f"Task {task_id} data loader length: {len(task_loaders)}")
         
         tracker = BlockGradTracker(model)
         trained_model = train_ansnet(model, task_loaders, save_dir=args.save_path, task_id=task_id, num_epochs=args.num_epochs_per_task, lr=args.lr)
