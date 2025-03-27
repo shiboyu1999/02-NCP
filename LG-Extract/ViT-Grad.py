@@ -57,21 +57,13 @@ class ViTBlockGradTracker:
             attn = output[1]
             # 计算每个注意力头对分类的贡献程度
             cls_attn = attn[:, :, 0, 1:]
-            importance = cls_attn.mean(dim=(0,2))
+            importance = cls_attn.mean(dim=(0,2)).mean()  # 指定层所有head的平均重要性
             self.attn_importance_dict[layer_name].append(importance.detach())
         return attn_hook
     
     def _get_metrics(self):
         """返回梯度稳定性与注意力重要性矩阵"""
-        # 梯度稳定性：各层在不同任务上的方差
-        gard_stability = {name: np.var(values) for name, values in self.grad_dict.items()}
-
-        attn_important = {}
-        for name, values in self.attn_importance_dict.items():
-            # values: [tasks, heads]
-            attn_important[name] = torch.stack(values).mean(dim=0).mean().cpu().numpy()  # 指定层所有head的重要性
-        return grad_stability, attn_important, self.grad_dict, self.attn_importance_dict
-
+        return self.grad_dict, self.attn_importance_dict
 
 # ------------------------
 # ViT 模型定义
@@ -79,6 +71,41 @@ class ViTBlockGradTracker:
 def create_vit_model(num_classes=20, arch='vit_base_patch16_224'):
     model = timm.create_model(arch, pretrained=False, num_classes=num_classes)
     return model
+
+# ------------------------
+# 训练流程
+# ------------------------
+def save_checkpoint(model, optimizer, epoch, task_id, save_path):
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    torch.save({'task_id': task_id,
+                     'epoch': epoch,
+                     'state': model.state_dict(),
+                     'optim': optimizer.state_dict(),
+                     }, save_path)
+    
+def train_ansnet(model, task_loader, save_path, task_id, epoch_per_task=30, lr=0.0001):
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    for epoch in range(epoch_per_task):
+        for idx, input, label in enumerate(task_loader):
+            input = input.cuda()
+            label = label.cuda()
+
+            output = model(input)
+            loss = criterion(output, label)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    
+    save_checkpoint(model, optimizer, epoch, task_id, save_path)
+
+
+
+
+
 
 
 
