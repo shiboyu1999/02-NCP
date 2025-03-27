@@ -1,5 +1,5 @@
 """
-基于梯度信息的CNN架构(ResNet)的祖先模型的学习基因抽取
+基于梯度信息的CNN架构(ResNet)的祖先模型的学习基因的抽取
 """
 import os
 import torch
