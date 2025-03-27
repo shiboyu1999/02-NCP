@@ -36,7 +36,7 @@ class ViTBlockGradTracker:
         self.handles = []
         for layer_name, layer in self._layers:
             # 注册梯度追踪钩子
-            grad_handle = layer.register_backward_hook(self._make_grad_hook(layer_name))
+            grad_handle = layer.register_full_backward_hook(self._make_grad_hook(layer_name))
             self.handles.append(grad_handle)
             # 注册注意力重要性追踪钩子
             attn_handle = layer.attn.register_forward_hook(self._make_attn_hook(layer_name))
@@ -65,7 +65,7 @@ class ViTBlockGradTracker:
         # 转化为[任务数目 ✖️ block数量] 矩阵
         grad_matrix = []
         attn_matrix = []
-        for block_name, _ in self._blocks:
+        for block_name, _ in self._layers:
             grad_matrix.append(self.grad_dict[block_name])
             attn_matrix.append(self.attn_importance_dict[block_name])
         return np.array(grad_matrix), np.array(attn_matrix)
@@ -89,11 +89,11 @@ def save_checkpoint(model, optimizer, epoch, task_id, save_path):
                      'optim': optimizer.state_dict(),
                      }, save_path)
     
-def train_ansnet(model, task_loader, save_path, task_id, epoch_per_task=30, lr=0.0001):
+def train_ansnet(model, task_loader, save_dir, task_id, epoch_per_task=30, lr=0.0001):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    for epoch in range(epoch_per_task):
+    for epoch in tqdm(range(epoch_per_task)):
         for idx, input, label in enumerate(task_loader):
             input = input.cuda()
             label = label.cuda()
@@ -105,7 +105,7 @@ def train_ansnet(model, task_loader, save_path, task_id, epoch_per_task=30, lr=0
             loss.backward()
             optimizer.step()
     
-    save_checkpoint(model, optimizer, epoch, task_id, save_path)
+    save_checkpoint(model, optimizer, epoch, task_id, save_dir)
 
 def save_grad_matrix(grad_dict, attn_importance_dict, save_path):
     """每个任务都保存一次grad和attn重要性信息"""
@@ -232,7 +232,7 @@ if __name__ == '__main__':
 
         # 记录梯度信息
         task_gradients, task_attn_importance = tracker.get_grad_attn_matrix()
-        save_grad_matrix(task_gradients[:, -1], args.save_path[:, -1], save_path=args.save_path)
+        save_grad_matrix(task_gradients[:, -1], task_attn_importance[:, -1], save_path=args.save_path)
 
         model = trained_model
 
