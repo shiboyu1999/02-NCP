@@ -14,6 +14,7 @@ import numpy as np
 from collections import defaultdict
 from tqdm import tqdm
 import argparse
+import time
 
 # ------------------------
 # 数据集划分
@@ -117,11 +118,16 @@ def train_ansnet(model, task_loaders, save_dir, task_id, num_epochs=30, lr=0.000
 # 保存gradient_matrix函数
 # ------------------------
 def save_gradient_matrix(gradient_matrix, save_path):
-    np.savetxt(os.path.join(save_path, "gradient_matrix.txt"),
-               gradient_matrix,
-               fmt="%.6f",
-               delimiter=",")
-    print(f"Gradient matrix saved for Task {task_id}")
+    # 确保保存路径存在
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    file_path = os.path.join(save_path, "gradient_matrix.txt")
+
+    # 以追加模式写入每个任务的梯度
+    with open(file_path, "a") as f:
+        np.savetxt(f, gradient_matrix.reshape(1, -1), fmt="%.6f", delimiter=",")
+        f.write("\n")  # 每个任务的梯度换一行
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -165,6 +171,9 @@ if __name__ == '__main__':
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
+
+    # 记录任务开始时间
+    start_time = time.time()
     
     # 加载数据集
     dataset = ImageFolder(root=args.dataset_root, transform=transform)
@@ -182,11 +191,16 @@ if __name__ == '__main__':
     num_tasks = args.num_tasks
     class_per_task = args.class_per_task
 
+    end_time = time.time()
+    # 计算并打印总时长
+    elapsed_time = end_time - start_time
+    print(f"数据处理时间开销: ({elapsed_time/60:.2f} minutes)")
+
     # 记录最终的梯度矩阵
     final_grad_matrix = []
 
     # 开始训练
-    for task_id in range(args.num_tasks):
+    for task_id in range(0, args.num_tasks):
         print(f"#####################Task {task_id}#########################")
         # 获取当前任务的类标签
         task_classes = classes[task_id * class_per_task:(task_id + 1) * class_per_task]
@@ -198,8 +212,23 @@ if __name__ == '__main__':
             task_indices.extend(class_indices[class_label])  # 获取所有类标签对应的样本索引
 
         # 根据任务的样本索引创建子集
-        task_dataset = Subset(dataset, task_indices)
-        task_loaders = DataLoader(task_dataset, 
+        # 创建 Subset 数据集
+        subset_dataset = Subset(dataset, task_indices)
+
+        # **重新映射标签** (从全局标签映射到 0 到 class_per_task-1)
+        def map_labels(dataset_subset):
+            # 获取类标签的映射表
+            label_map = {class_to_idx[cls_name]: i for i, cls_name in enumerate(task_classes)}
+            # 对数据的标签进行重新映射
+            for i in range(len(dataset_subset)):
+                img, label = dataset_subset[i]
+                new_label = label_map[label]
+                dataset_subset.dataset.samples[dataset_subset.indices[i]] = (dataset_subset.dataset.samples[dataset_subset.indices[i]][0], new_label)
+        
+        # 映射标签
+        map_labels(subset_dataset)
+
+        task_loaders = DataLoader(subset_dataset, 
                                  batch_size=args.batch_size,
                                  shuffle=True,
                                  drop_last=True,
@@ -219,13 +248,7 @@ if __name__ == '__main__':
 
         # 记录梯度信息
         task_gradients = tracker.get_gradient_matrix()[:, -1] # 取最后一次反向传播的梯度
-        final_grad_matrix.append(task_gradients)
+        gradient_matrix = np.array(task_gradients)
+        save_gradient_matrix(gradient_matrix, args.save_path)
 
         model = trained_model
-    
-    # 将梯度矩阵转化为[任务数目 ✖️  block数量]
-    gradient_matrix = np.array(final_grad_matrix)
-    save_gradient_matrix(gradient_matrix, args.save_path)
-    print("梯度矩阵形状:", gradient_matrix.shape)
-    print("示例梯度值:")
-    print(gradient_matrix[:5, :3])  # 显示前5层在前3个任务的值
