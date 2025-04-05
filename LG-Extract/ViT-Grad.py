@@ -94,7 +94,7 @@ def train_ansnet(model, task_loader, save_dir, task_id, epoch_per_task=30, lr=0.
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
     for epoch in tqdm(range(epoch_per_task)):
-        for idx, input, label in enumerate(task_loader):
+        for input, label in (task_loaders):
             input = input.cuda()
             label = label.cuda()
 
@@ -221,7 +221,7 @@ if __name__ == '__main__':
         print(f"Task {task_id} data loader length: {len(task_loaders)}")
         
         tracker = ViTBlockGradTracker(model)
-        trained_model = train_ansnet(model, task_loaders, save_dir=args.save_path, task_id=task_id, num_epochs=args.num_epochs_per_task, lr=args.lr)
+        trained_model = train_ansnet(model, task_loaders, save_dir=args.save_path, task_id=task_id, epoch_per_task=args.num_epochs_per_task, lr=args.lr)
         
         # 执行虚拟前向传播以捕获最终梯度
         sample, _ = next(iter(task_loaders))
