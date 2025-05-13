@@ -113,10 +113,10 @@ def plot_trend(matrix):
     
     plt.grid(axis='y', alpha=0.3)  # 添加横向网格线
     plt.tight_layout()
-    plt.savefig('/home/shiboyu/code/02-NCP/results/Grad-cnn-checkpoints/resnet34/matrix_visualizer_trend.png', dpi=300, bbox_inches='tight')
+    plt.savefig('/home/shiboyu/code/02-NCP/results/Grad-cnn-checkpoints/resnet50/matrix_visualizer_trend.png', dpi=300, bbox_inches='tight')
 
 # 主程序
-file_path = '/home/shiboyu/code/02-NCP/results/Grad-cnn-checkpoints/resnet34/resnet32-grad-gradient_matrix.txt'  # 替换为你的实际路径
+file_path = '/home/shiboyu/code/02-NCP/results/Grad-cnn-checkpoints/resnet50/resnet50-grad-gradient_matrix.txt'  # 替换为你的实际路径
 matrix = read_matrix(file_path)
 
 # 使用 gamma=0.5 提升小值对比

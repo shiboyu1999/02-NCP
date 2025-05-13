@@ -18,11 +18,11 @@ from multiprocessing import Pool, cpu_count
 from functools import partial
 from tqdm import tqdm
 
-# # 华为NPU环境配置
-# sys.path.append('/usr/local/Ascend/ascend-toolkit/latest/python/site-packages')
-# import torch_npu
-# from torch_npu.npu import amp
-# from torch_npu.contrib import transfer_to_npu
+# 华为NPU环境配置
+sys.path.append('/usr/local/Ascend/ascend-toolkit/latest/python/site-packages')
+import torch_npu
+from torch_npu.npu import amp
+from torch_npu.contrib import transfer_to_npu
 
 class LoadSubImageNetTask(Dataset):
     def __init__(self, task_dir, transform=None):

@@ -3,7 +3,7 @@
 # 设置默认参数
 NUM_TASKS=50
 CLASS_PER_TASK=20
-BATCH_SIZE=32
+BATCH_SIZE=2
 NUM_EPOCHS_PER_TASK=30
 LR=0.00005
 NUM_WORKERS=8
@@ -12,7 +12,7 @@ DATASET_ROOT="/home/biye/dataset/ILSVRC2012_split"
 ARCH="vit-base"
 
 # 启动训练
-python /home/biye/code/02-NCP-1/LG-Extract/ViT-Grad.py \
+python /home/work/user-job-dir/app/02-NCP-1/LG-Extract/ViT-Grad.py \
     --num-tasks $NUM_TASKS \
     --class-per-task $CLASS_PER_TASK \
     --batch-size $BATCH_SIZE \
