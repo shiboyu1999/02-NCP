@@ -12,7 +12,7 @@ DATASET_ROOT="/home/biye/dataset/ILSVRC2012_split"
 ARCH="vit-base"
 
 # 启动训练
-python /home/work/user-job-dir/app/02-NCP-1/LG-Extract/ViT-Grad.py \
+python /home/biye/code/02-NCP-1/LG-Extract/ViT-Grad.py \
     --num-tasks $NUM_TASKS \
     --class-per-task $CLASS_PER_TASK \
     --batch-size $BATCH_SIZE \

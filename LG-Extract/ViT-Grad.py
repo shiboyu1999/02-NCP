@@ -140,8 +140,8 @@ def train_ansnet(model, task_loader, save_dir, task_id, epoch_per_task=30, lr=0.
     for epoch in tqdm(range(epoch_per_task)):
         for i, (inputs, labels) in enumerate(task_loader):
             step += 1
-            inputs = inputs.npu()
-            labels = labels.npu()
+            inputs = inputs.cuda()
+            labels = labels.cuda()
             
             # is_last_batch = (epoch == epoch_per_task - 1) and (i == len(task_loader) - 1)
             # if grad_tracker is not None:
@@ -234,7 +234,7 @@ def main():
 
         # 模型初始化或继续训练
         if task_id == 0:
-            model = create_vit_model(num_classes=args.class_per_task, arch='vit_base_patch16_224').npu()
+            model = create_vit_model(num_classes=args.class_per_task, arch='vit_base_patch16_224').cuda()
         print(model)
         
         # grad_tracker = ViTBlockGradTracker(model)
