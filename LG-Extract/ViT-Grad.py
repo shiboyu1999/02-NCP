@@ -107,6 +107,8 @@ class ViTBlockGradTracker:
             
             attn_tensor = torch.tensor(self.attn_importance_dict[block_name])
             attn_matrix.append(attn_tensor.cpu().numpy())
+        if len(self.grad_dict) == 0 or len(self.attn_importance_dict) == 0:
+            raise ValueError("Gradient or Attention data is empty. Did you activate the tracker during training?")
         return np.array(grad_matrix), np.array(attn_matrix)
 
 # ------------------------
@@ -128,7 +130,7 @@ def create_vit_model(num_classes=20, arch='vit_base_patch16_224'):
     return model
 
 
-def train_ansnet(model, task_loader, save_dir, task_id, epoch_per_task=30, lr=0.0001):
+def train_ansnet(model, task_loader, save_dir, task_id, epoch_per_task=30, lr=0.0001, grad_tracker=None):
     model.train()
     """优化后的训练函数（关键修改点2：添加混合精度）"""
     criterion = nn.CrossEntropyLoss()
@@ -143,9 +145,9 @@ def train_ansnet(model, task_loader, save_dir, task_id, epoch_per_task=30, lr=0.
             inputs = inputs.cuda()
             labels = labels.cuda()
             
-            # is_last_batch = (epoch == epoch_per_task - 1) and (i == len(task_loader) - 1)
-            # if grad_tracker is not None:
-            #     grad_tracker.active = is_last_batch
+            is_last_batch = (epoch == epoch_per_task - 1) and (i == len(task_loader) - 1)
+            if grad_tracker is not None:
+                grad_tracker.active = is_last_batch
 
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -237,19 +239,10 @@ def main():
             model = create_vit_model(num_classes=args.class_per_task, arch='vit_base_patch16_224').cuda()
         print(model)
         
-        # grad_tracker = ViTBlockGradTracker(model)
-        # model = train_ansnet(model, loader, args.save_path, task_id, grad_tracker=grad_tracker)
-        tracker = ViTBlockGradTracker(model)
-        trained_model = train_ansnet(model, loader, save_dir=args.save_path, task_id=task_id)
+        grad_tracker = ViTBlockGradTracker(model)
+        model = train_ansnet(model, loader, args.save_path, task_id, grad_tracker=grad_tracker)
         
-        # 执行虚拟前向传播以捕获最终梯度
-        sample, _ = next(iter(loader))
-        sample = sample.cuda()
-        output = trained_model(sample)
-        loss = output.mean() # 虚拟损失
-        loss.backward()
-        
-        grad, attn = tracker.get_grad_attn_matrix()
+        grad, attn = grad_tracker.get_grad_attn_matrix()
         save_grad_matrix(grad[:, -1], attn[:, -1], args.save_path)
 
 
