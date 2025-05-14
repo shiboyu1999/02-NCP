@@ -184,6 +184,7 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
         with open(log_path, "a") as f:
             f.write(epoch_log)
 
+#  取出中间值
 class ResNetWithFeatures(nn.Module):
     def __init__(self, backbone):
         super().__init__()
