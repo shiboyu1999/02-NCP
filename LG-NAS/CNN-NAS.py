@@ -130,7 +130,7 @@ class SuperNet(nn.Module):
         return out0, out1, out2, out3
 
 
-def train_supernet(supernet, teacher_model, train_loader, device, log_path="supernet_log.txt", epochs=10):
+def train_supernet(supernet, teacher_model, train_loader, device, log_path="supernet_log.txt", epochs=10, alpha=0.5):
     supernet.to(device)
     teacher_model.to(device)
     teacher_model.eval()
@@ -138,7 +138,6 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
     optimizer = torch.optim.Adam(supernet.parameters(), lr=0.001)
     criterion = nn.MSELoss()
 
-    # 日志文件初始化
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "w") as f:
         f.write(f"SuperNet Training Log - {datetime.now()}\n\n")
@@ -150,14 +149,23 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
 
             with torch.no_grad():
                 t_out = teacher_model(images)
-                t_feats = [t_out[i] for i in [0, 1, 2, 3]]  # 假设你能访问中间输出
+                t_feats = [t_out[i] for i in [0, 1, 2, 3]]  # ResNet features
+                gene_outputs = t_out[4]
 
-            s_out = supernet(images, *t_feats)
+            s_out = supernet(images, *t_feats)  # out0, out1, out2, out3
+
 
             loss = 0.0
-            for s_layer, t_layer in zip(s_out, t_feats):
-                for s_block in s_layer:
-                    loss += criterion(s_block, t_layer)
+            for i in range(4):  # layer 0, 1, 2, 3
+                cand_blocks = s_out[i]
+                t_feat = t_feats[i]
+                for s_block in cand_blocks:
+                    # loss1: 与 teacher 对齐
+                    loss_teacher = criterion(s_block, t_feat)
+                    # loss2: 与 gene 输出对齐
+                    loss_gene = criterion(s_block, gene_out)
+                    # 总损失 = teacher 对齐 + gene 对齐
+                    loss += alpha * loss_teacher + (1 - alpha) * loss_gene
 
             optimizer.zero_grad()
             loss.backward()
@@ -175,6 +183,39 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
         print(epoch_log)
         with open(log_path, "a") as f:
             f.write(epoch_log)
+
+class ResNetWithFeatures(nn.Module):
+    def __init__(self, backbone):
+        super().__init__()
+        self.layer0 = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool)
+        self.layer1 = backbone.layer1  # usually has 3 BasicBlocks
+        self.layer2 = backbone.layer2  # 4 blocks
+        self.layer3 = backbone.layer3  # 6 blocks
+        self.layer4 = backbone.layer4  # 3 blocks for resnet34
+
+    def forward(self, x):
+        x = self.layer0(x)
+
+        f1 = self._extract_layer_features(self.layer1, x)  # output of last block
+        f2 = self._extract_layer_features(self.layer2, f1)
+        f3 = self._extract_layer_features(self.layer3, f2)
+
+        # 特殊处理 layer4
+        layer4_feats = []
+        input_l4 = f3
+        for idx, block in enumerate(self.layer4):
+            input_l4 = block(input_l4)
+            layer4_feats.append(input_l4)
+
+        f4_penultimate = layer4_feats[-2]  # 倒数第二个 block 的输出
+        f4_last = layer4_feats[-1]         # 最后一个 block 的输出
+
+        return [f1, f2, f3, f4_penultimate, f4_last]
+
+    def _extract_layer_features(self, layer, x):
+        for block in layer:
+            x = block(x)
+        return x
 
 def get_args():
     parser = argparse.ArgumentParser(description="Train SuperNet with teacher model")
@@ -226,23 +267,6 @@ def main():
         log_path=args.log_path, 
         epochs=args.epochs
     )
-
-class ResNetWithFeatures(nn.Module):
-    def __init__(self, backbone):
-        super().__init__()
-        self.layer0 = nn.Sequential(backbone.conv1, backbone.bn1, backbone.relu, backbone.maxpool)
-        self.layer1 = backbone.layer1
-        self.layer2 = backbone.layer2
-        self.layer3 = backbone.layer3
-        self.layer4 = backbone.layer4
-
-    def forward(self, x):
-        x = self.layer0(x)
-        f1 = self.layer1(x)
-        f2 = self.layer2(f1)
-        f3 = self.layer3(f2)
-        f4 = self.layer4(f3)
-        return [f1, f2, f3, f4]
 
 
 if __name__ == '__main__':
