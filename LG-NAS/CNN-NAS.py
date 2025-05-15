@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from torchvision.datasets import ImageFolder
 from tqdm import tqdm
+import time
 
 class Bottleneck(nn.Module):
     expansion = 4
@@ -152,12 +153,15 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "w") as f:
         f.write(f"SuperNet Training Log - {datetime.now()}\n\n")
+    
+    total_step = len(train_loader)
 
     for epoch in range(epochs):
         total_loss = 0.0
         for step, (images, _) in enumerate(train_loader):
+            # 计算每个step的时间
+            start_time = time.time()
             images = images.to(device)
-
             with torch.no_grad():
                 t_out = teacher_model(images)
                 t_feats = [t_out[i] for i in [0, 1, 2, 3]]  # ResNet features
@@ -184,8 +188,9 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
             optimizer.step()
 
             total_loss += loss.item()
+            step_time = time.time() - start_time
             if step % 10 == 0:
-                log = f"[Epoch {epoch+1}/{epochs}] Step {step}, Loss: {loss.item():.4f}"
+                log = f"[Epoch {epoch+1}/{epochs}] [Step {step}/{total_step}], Loss: {loss.item():.4f}, Step Time: {step_time:.4f}s"
                 print(log)
                 log_path = os.path.join(os.path.dirname(log_path), "supernt_log.txt")
                 with open(log_path, "a") as f:
