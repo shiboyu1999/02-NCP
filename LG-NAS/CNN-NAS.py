@@ -7,6 +7,8 @@ from datetime import datetime
 import argparse
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+from torchvision.datasets import ImageFolder
+from tqdm import tqdm
 
 class Bottleneck(nn.Module):
     expansion = 4
@@ -113,10 +115,14 @@ class SuperNet(nn.Module):
         self.bn1 = nn.BatchNorm2d(64)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-        self.candlayer_0 = nn.ModuleList([CandBlockClass(64, 64, num_conv=n) for n in [1, 2, 3]])
-        self.candlayer_1 = nn.ModuleList([CandBlockClass(64, 128, num_conv=n) for n in [1, 2, 3]])
-        self.candlayer_2 = nn.ModuleList([CandBlockClass(128, 256, num_conv=n) for n in [1, 2, 3]])
-        self.candlayer_3 = nn.ModuleList([CandBlockClass(256, 512, num_conv=n) for n in [1, 2]])
+        self.align_f1 = FeatureAlign(in_channels=64)
+        self.align_f2 = FeatureAlign(in_channels=128)
+        self.align_f3 = FeatureAlign(in_channels=256)
+
+        self.candlayer_0 = nn.ModuleList([CandBlockClass(64, 64, kernel_size=k, num_conv=n, stride=1) for n in [1, 2, 3] for k in [1, 3, 5, 7]] )
+        self.candlayer_1 = nn.ModuleList([CandBlockClass(64, 128, kernel_size=k,  num_conv=n, stride=2) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
+        self.candlayer_2 = nn.ModuleList([CandBlockClass(128, 256, kernel_size=k, num_conv=n, stride=2) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
+        self.candlayer_3 = nn.ModuleList([CandBlockClass(256, 512, kernel_size=k, num_conv=n, stride=2) for n in [1, 2] for k in [1, 3, 5, 7]])
 
     def forward(self, img, *t_feats):
         assert len(t_feats) >= 4
@@ -127,7 +133,11 @@ class SuperNet(nn.Module):
         out1 = [self.candlayer_1[i](t_feats[0]) for i in range(len(self.candlayer_1))]
         out2 = [self.candlayer_2[i](t_feats[1]) for i in range(len(self.candlayer_2))]
         out3 = [self.candlayer_3[i](t_feats[2]) for i in range(len(self.candlayer_3))]
-        return out0, out1, out2, out3
+        align_gene_out0 = [self.align_f1(out0[i]) for i in range(len(out0))]
+        align_gene_out1 = [self.align_f2(out1[i]) for i in range(len(out1))]
+        align_gene_out2 = [self.align_f3(out2[i]) for i in range(len(out2))]
+        align_gene_out3 = out3
+        return out0, out1, out2, out3, align_gene_out0, align_gene_out1, align_gene_out2, align_gene_out3
 
 
 def train_supernet(supernet, teacher_model, train_loader, device, log_path="supernet_log.txt", epochs=10, alpha=0.5):
@@ -138,6 +148,7 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
     optimizer = torch.optim.Adam(supernet.parameters(), lr=0.001)
     criterion = nn.MSELoss()
 
+    log_path = os.path.join(os.path.dirname(log_path), "supernt_log.txt")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "w") as f:
         f.write(f"SuperNet Training Log - {datetime.now()}\n\n")
@@ -152,18 +163,19 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
                 t_feats = [t_out[i] for i in [0, 1, 2, 3]]  # ResNet features
                 gene_outputs = t_out[4]
 
-            s_out = supernet(images, *t_feats)  # out0, out1, out2, out3
-
+            s_out = supernet(images, *t_feats)  # out0, out1, out2, out3, align_gene_out0, align_gene_out1, align_gene_out2, align_gene_out3
 
             loss = 0.0
             for i in range(4):  # layer 0, 1, 2, 3
                 cand_blocks = s_out[i]
                 t_feat = t_feats[i]
-                for s_block in cand_blocks:
+                aligned_cand_blocks = s_out[i + 4]  # align_gene_out0, align_gene_out1, align_gene_out2, align_gene_out3
+                for s_block, s_aligned in zip(cand_blocks, aligned_cand_blocks):
+                    # print(f"Block {i} - Teacher Feature Shape: {t_feat.shape}, Aligned Block Shape: {s_aligned.shape}, Candidate Block Shape: {s_block.shape}")
                     # loss1: 与 teacher 对齐
                     loss_teacher = criterion(s_block, t_feat)
                     # loss2: 与 gene 输出对齐
-                    loss_gene = criterion(s_block, gene_out)
+                    loss_gene = criterion(s_aligned, gene_outputs)
                     # 总损失 = teacher 对齐 + gene 对齐
                     loss += alpha * loss_teacher + (1 - alpha) * loss_gene
 
@@ -175,6 +187,7 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
             if step % 10 == 0:
                 log = f"[Epoch {epoch+1}/{epochs}] Step {step}, Loss: {loss.item():.4f}"
                 print(log)
+                log_path = os.path.join(os.path.dirname(log_path), "supernt_log.txt")
                 with open(log_path, "a") as f:
                     f.write(log + "\n")
 
@@ -183,6 +196,31 @@ def train_supernet(supernet, teacher_model, train_loader, device, log_path="supe
         print(epoch_log)
         with open(log_path, "a") as f:
             f.write(epoch_log)
+        
+        checkpoint_model_path = os.path.join(os.path.dirname(log_path), "supernet_checkpoint.pt")
+        torch.save(
+            {
+                "model": supernet.state_dict(),
+                "epoch": epoch
+            },
+            checkpoint_model_path
+        )
+
+    final_model_path = os.path.join(os.path.dirname(log_path), "supernet_final.pt")
+    torch.save(supernet.state_dict(), final_model_path)
+
+
+class FeatureAlign(nn.Module):
+    def __init__(self, in_channels, out_channels=512, target_size=(7, 7)):
+        super().__init__()
+        self.project = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d(target_size)  # 或使用 nn.Upsample 或 stride conv
+        )
+
+    def forward(self, x):
+        return self.project(x)
 
 #  取出中间值
 class ResNetWithFeatures(nn.Module):
