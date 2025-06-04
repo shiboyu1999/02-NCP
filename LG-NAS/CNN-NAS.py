@@ -14,14 +14,15 @@ import time
 class Bottleneck(nn.Module):
     expansion = 4
 
-    def __init__(self, in_channels, out_channels, stride=1):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1):
         super(Bottleneck, self).__init__()
         mid_channels = out_channels // self.expansion
 
         self.conv1 = nn.Conv2d(in_channels, mid_channels, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(mid_channels)
 
-        self.conv2 = nn.Conv2d(mid_channels, mid_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        padding = kernel_size // 2
+        self.conv2 = nn.Conv2d(mid_channels, mid_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=False)
         self.bn2 = nn.BatchNorm2d(mid_channels)
 
         self.conv3 = nn.Conv2d(mid_channels, out_channels, kernel_size=1, bias=False)
@@ -36,6 +37,7 @@ class Bottleneck(nn.Module):
 
     def forward(self, x):
         identity = x
+        # print("x.shape: ", x.shape)
         out = F.relu(self.bn1(self.conv1(x)))
         out = F.relu(self.bn2(self.conv2(out)))
         out = self.bn3(self.conv3(out))
@@ -44,7 +46,7 @@ class Bottleneck(nn.Module):
 
 
 class CandBottleneckBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, num_bottleneck=1):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, num_bottleneck=1):
         super(CandBottleneckBlock, self).__init__()
         layers = []
         for i in range(num_bottleneck):
@@ -52,7 +54,8 @@ class CandBottleneckBlock(nn.Module):
                 Bottleneck(
                     in_channels if i == 0 else out_channels,
                     out_channels,
-                    stride if i == 0 else 1
+                    kernel_size=kernel_size,
+                    stride=stride if i == 0 else 1
                 )
             )
         self.block = nn.Sequential(*layers)
@@ -109,37 +112,102 @@ class SuperNet(nn.Module):
     def __init__(self, block_type="basic"):
         super(SuperNet, self).__init__()
 
-        BlockClass = BasicBlock if block_type == "basic" else Bottleneck
-        CandBlockClass = CandBasicBlock if block_type == "basic" else CandBottleneckBlock
-
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-        self.align_f1 = FeatureAlign(in_channels=64)
-        self.align_f2 = FeatureAlign(in_channels=128)
-        self.align_f3 = FeatureAlign(in_channels=256)
+        if block_type == "basic":
+            self.align_f1 = FeatureAlign(in_channels=64, out_channels=512)
+            self.align_f2 = FeatureAlign(in_channels=128, out_channels=512)
+            self.align_f3 = FeatureAlign(in_channels=256, out_channels=512)
+        else:
+            self.align_f1 = FeatureAlign(in_channels=256, out_channels=2048)
+            self.align_f2 = FeatureAlign(in_channels=512, out_channels=2048)
+            self.align_f3 = FeatureAlign(in_channels=1024, out_channels=2048)
 
-        self.candlayer_0 = nn.ModuleList([CandBlockClass(64, 64, kernel_size=k, num_conv=n, stride=1) for n in [1, 2, 3] for k in [1, 3, 5, 7]] )
-        self.candlayer_1 = nn.ModuleList([CandBlockClass(64, 128, kernel_size=k,  num_conv=n, stride=2) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
-        self.candlayer_2 = nn.ModuleList([CandBlockClass(128, 256, kernel_size=k, num_conv=n, stride=2) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
-        self.candlayer_3 = nn.ModuleList([CandBlockClass(256, 512, kernel_size=k, num_conv=n, stride=2) for n in [1, 2] for k in [1, 3, 5, 7]])
+        if block_type == "basic":
+            self.candlayer_0 = nn.ModuleList([CandBasicBlock(64, 64, kernel_size=k, num_conv=n, stride=1) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
+            self.candlayer_1 = nn.ModuleList([CandBasicBlock(64, 128, kernel_size=k,  num_conv=n, stride=2) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
+            self.candlayer_2 = nn.ModuleList([CandBasicBlock(128, 256, kernel_size=k, num_conv=n, stride=2) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
+            self.candlayer_3 = nn.ModuleList([CandBasicBlock(256, 512, kernel_size=k, num_conv=n, stride=2) for n in [1, 2] for k in [1, 3, 5, 7]])
+        else:
+            self.candlayer_0 = nn.ModuleList([CandBottleneckBlock(64, 256, kernel_size=k, num_bottleneck=n, stride=1) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
+            self.candlayer_1 = nn.ModuleList([CandBottleneckBlock(256, 512, kernel_size=k, num_bottleneck=n, stride=2) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
+            self.candlayer_2 = nn.ModuleList([CandBottleneckBlock(512, 1024, kernel_size=k, num_bottleneck=n, stride=2) for n in [1, 2, 3] for k in [1, 3, 5, 7]])
+            self.candlayer_3 = nn.ModuleList([CandBottleneckBlock(1024, 2048, kernel_size=k, num_bottleneck=n, stride=2) for n in [1, 2] for k in [1, 3, 5, 7]])
 
     def forward(self, img, *t_feats):
         assert len(t_feats) >= 4
 
         x0 = F.relu(self.bn1(self.conv1(img)))
         x0 = self.maxpool(x0)
+        # print("x0.shape: ", x0.shape)
         out0 = [self.candlayer_0[i](x0) for i in range(len(self.candlayer_0))]
+        # print("out0.shape: ", out0[0].shape)
         out1 = [self.candlayer_1[i](t_feats[0]) for i in range(len(self.candlayer_1))]
+        # print("out1.shape: ", out1[0].shape)
         out2 = [self.candlayer_2[i](t_feats[1]) for i in range(len(self.candlayer_2))]
+        # print("out2.shape: ", out2[0].shape)
         out3 = [self.candlayer_3[i](t_feats[2]) for i in range(len(self.candlayer_3))]
+        # print("out3.shape: ", out3[0].shape)
         align_gene_out0 = [self.align_f1(out0[i]) for i in range(len(out0))]
         align_gene_out1 = [self.align_f2(out1[i]) for i in range(len(out1))]
         align_gene_out2 = [self.align_f3(out2[i]) for i in range(len(out2))]
         align_gene_out3 = out3
         return out0, out1, out2, out3, align_gene_out0, align_gene_out1, align_gene_out2, align_gene_out3
 
+def evaluate_supernet(supernet, teacher_model, val_loader, device, save_path="cand_selection.txt"):
+    supernet.eval()
+    teacher_model.eval()
+    supernet.to(device)
+    teacher_model.to(device)
+
+    criterion = nn.MSELoss(reduction='none')  # 不平均，逐样本保留
+
+    # 初始化每个 candidate block 的累计损失
+    num_blocks_per_layer = [len(supernet.candlayer_0), len(supernet.candlayer_1),
+                            len(supernet.candlayer_2), len(supernet.candlayer_3)]
+    block_losses = [torch.zeros(n).to(device) for n in num_blocks_per_layer]
+    block_counts = [0] * 4  # 样本计数器
+
+    with torch.no_grad():
+        for images, _ in tqdm(val_loader, desc="Evaluating SuperNet"):
+            images = images.to(device)
+            teacher_outputs = teacher_model(images)
+            t_feats = [teacher_outputs[i] for i in [0, 1, 2, 3]]
+
+            x0 = F.relu(supernet.bn1(supernet.conv1(images)))
+            x0 = supernet.maxpool(x0)
+
+            cand_inputs = [x0] + t_feats[:3]  # 输入 x0, t1, t2 for layer 0,1,2
+            cand_layers = [supernet.candlayer_0, supernet.candlayer_1, supernet.candlayer_2, supernet.candlayer_3]
+
+            for layer_idx in range(4):
+                t_feat = t_feats[layer_idx]
+                input_feat = cand_inputs[layer_idx]
+                candidates = cand_layers[layer_idx]
+
+                for i, cand_block in enumerate(candidates):
+                    output = cand_block(input_feat)
+                    loss = criterion(output, t_feat).mean(dim=[1,2,3]).mean()  # 每样本 MSE，后取平均
+                    block_losses[layer_idx][i] += loss
+
+                block_counts[layer_idx] += 1
+
+    selected_blocks = []
+    for layer_idx in range(4):
+        avg_losses = block_losses[layer_idx] / block_counts[layer_idx]
+        topk = torch.topk(-avg_losses, k=4)  # 最小的4个，负号变最大
+        top_indices = topk.indices.cpu().tolist()
+        selected_blocks.append(top_indices)
+
+    # 写入文件
+    with open(save_path, "w") as f:
+        for i, indices in enumerate(selected_blocks):
+            f.write(f"Layer {i}: {', '.join(map(str, indices))}\n")
+
+    print(f"Top-4 candidate block indices per layer saved to {save_path}")
+    return selected_blocks
 
 def train_supernet(supernet, teacher_model, train_loader, device, log_path="supernet_log.txt", epochs=10, alpha=0.5):
     supernet.to(device)
@@ -221,7 +289,7 @@ class FeatureAlign(nn.Module):
         self.project = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=1),
             nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool2d(target_size)  # 或使用 nn.Upsample 或 stride conv
+            nn.AdaptiveAvgPool2d(target_size)
         )
 
     def forward(self, x):
@@ -271,6 +339,7 @@ def get_args():
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu', help='Device to use for training')
     parser.add_argument('--dataset_root', type=str, default='./data', help='Path to download/load dataset')
     parser.add_argument('--arch', type=str, default='resnet34', choices=['resnet34', 'resnet50'], help='Teacher model architecture')
+    parser.add_argument('--eval', action='store_true', help='Evaluate the model')
 
 
     return parser.parse_args()
@@ -284,10 +353,16 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))
     ])
-
-    # 加载 ImageFolder 数据集
-    train_dataset = ImageFolder(root=args.dataset_root, transform=transform)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    
+    if args.eval:
+        val_dataset = ImageFolder(root=args.dataset_root.replace("train", "val"), transform=transform)
+        print(f"Validation dataset size: {len(val_dataset)}")
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    else:
+        # 加载 ImageFolder 数据集
+        train_dataset = ImageFolder(root=args.dataset_root, transform=transform)
+        print(f"Training dataset size: {len(train_dataset)}")
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
 
     # 根据 arch 决定教师模型和 supernet 结构
     if args.arch == 'resnet34':
@@ -301,6 +376,19 @@ def main():
 
     teacher_model = ResNetWithFeatures(teacher)
     supernet = SuperNet(block_type=block_type)
+    if args.eval:
+        print("Evaluating SuperNet...")
+        # 加载supernet的权重
+        checkpoint_path = os.path.join(os.path.dirname(args.log_path), "supernet_final.pt")
+        supernet.load_state_dict(torch.load(checkpoint_path))
+        evaluate_supernet(
+        supernet=supernet,
+        teacher_model=teacher_model,
+        val_loader=val_loader,
+        device=args.device,
+        save_path=os.path.join(os.path.dirname(args.log_path), "cand_selection.txt")
+        )
+        return
 
     # 开始训练
     train_supernet(

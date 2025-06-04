@@ -201,10 +201,11 @@ def main():
     args.save_path = os.path.join(args.save_path, args.arch)
     os.makedirs(args.save_path, exist_ok=True)
     start_task = 0
+    model = create_vit_model(num_classes=args.class_per_task, arch='vit_base_patch16_224').cuda()
     if args.resume and os.path.isfile(args.resume):
         print(f"Resuming model from {args.resume}")
-        checkpoint = torch.load(args.resume, map_location='npu')
-        model.load_state_dict(checkpoint['model'])
+        checkpoint = torch.load(args.resume, map_location='cpu')
+        model.load_state_dict(checkpoint['state'])
         start_task = checkpoint['task_id']+1
         
     for task_id in range(start_task, args.num_tasks):
